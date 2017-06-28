@@ -20,6 +20,78 @@
 #include <sys/xattr.h>
 #endif
 #include <sys/file.h> /* flock(2) */
+
+
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <stdbool.h>
+
+#define SOCK_PATH "/home/student/clam/sock"
+#define MSG_LEN 1000
+
+static bool isSafe(const char* path) {
+
+    size_t pathLen = strlen(path);
+    if(path[pathLen-1] == '/') {
+        return true; //is directory
+    }
+
+    static const char* command = "nSCAN ";
+    static const char endline = '\n';
+
+    int sd;
+    size_t len;
+    ssize_t t;
+    struct sockaddr_un remote;
+    char str[MSG_LEN];
+
+    if ((sd = socket(AF_UNIX, SOCK_STREAM, 0)) == -1) {
+        perror("socket");
+        return false;
+    }
+
+    remote.sun_family = AF_UNIX;
+    strcpy(remote.sun_path, SOCK_PATH);
+    len = strlen(remote.sun_path) + sizeof(remote.sun_family);
+    if (connect(sd, (struct sockaddr *)&remote, len) == -1) {
+        perror("connect");
+        return false;
+    }
+
+    if (send(sd, command, strlen(command), 0) == -1 ) {
+        perror("send");
+        return false;
+    }
+
+    if (send(sd, path, strlen(path), 0) == -1 ) {
+        perror("send");
+        return false;
+    }
+
+    if (send(sd, &endline, 1, 0) == -1 ) {
+        perror("send");
+        return false;
+    }
+
+    if ((t=recv(sd, str, MSG_LEN, 0)) > 0) {
+        str[t] = '\0';
+        //TODO: check string for antivirus
+        fprintf(stderr, "ClamAV returned: %s\n", str);
+        if(!strstr(str, "OK")) {
+
+            return false;
+        }
+    } else {
+        if (t < 0) perror("recv");
+        else printf("ClamAV server closed connection\n");
+        return false;
+    }
+
+    close(sd);
+    return true;
+}
+
 static void *xmp_init(struct fuse_conn_info *conn,
                       struct fuse_config *cfg)
 {
@@ -41,6 +113,13 @@ static void *xmp_init(struct fuse_conn_info *conn,
 static int xmp_getattr(const char *path, struct stat *stbuf,
                        struct fuse_file_info *fi)
 {
+//    if(!isSafe(path)) {
+//        fprintf(stderr, "GRR\n");
+//        return -EPERM;
+//    } else {
+//        fprintf(stderr, "!!!!!!!!!!!OK!!!!!!!!!!1\n");
+//    }
+
     int res;
     (void) path;
     if(fi)
@@ -268,6 +347,10 @@ static int xmp_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 }
 static int xmp_open(const char *path, struct fuse_file_info *fi)
 {
+    if(!isSafe(path)) {
+        fprintf(stderr, "COOOO\n");
+        return -EPERM;
+    }
     int fd;
     fd = open(path, fi->flags);
     if (fd == -1)
@@ -278,6 +361,10 @@ static int xmp_open(const char *path, struct fuse_file_info *fi)
 static int xmp_read(const char *path, char *buf, size_t size, off_t offset,
                     struct fuse_file_info *fi)
 {
+    if(!isSafe(path)) {
+        fprintf(stderr, "COOOO\n");
+        return -EPERM;
+    }
     int res;
     (void) path;
     res = pread(fi->fh, buf, size, offset);
@@ -288,6 +375,11 @@ static int xmp_read(const char *path, char *buf, size_t size, off_t offset,
 static int xmp_read_buf(const char *path, struct fuse_bufvec **bufp,
                         size_t size, off_t offset, struct fuse_file_info *fi)
 {
+    if(!isSafe(path)) {
+        fprintf(stderr, "COOOO\n");
+        return -EPERM;
+    }
+
     struct fuse_bufvec *src;
     (void) path;
     src = malloc(sizeof(struct fuse_bufvec));
